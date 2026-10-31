@@ -1,0 +1,63 @@
+# ---- Unity ----
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+[Mm]onitoring/
+[Ee]xported[Oo]bj/
+
+# ---- IDE / editor ----
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Builds & symbols ----
+*.apk
+*.aab
+*.unitypackage
+*.app
+*.symbols.zip
+crashlytics-build.properties
+
+# ---- Secrets (never commit) ----
+*.keystore
+*.jks
+keystore.properties
+google-services.json
+GoogleService-Info.plist
+service-account*.json
+.env
+.secrets/
+
+# ---- Addressables / bundles ----
+/[Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
+/[Aa]ssets/[Ss]treamingAssets/aa/*
+!/[Aa]ssets/[Ss]treamingAssets/aa.meta
+!/[Aa]ssets/[Ss]treamingAssets/aa/*
+
+# ---- Burst / IL2CPP generated ----
+*.tmp
+*.bak
+*.unity_buildreportlog
