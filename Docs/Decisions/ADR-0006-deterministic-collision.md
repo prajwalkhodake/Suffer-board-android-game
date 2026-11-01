@@ -3,6 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-10-31
 - **Contract:** `TECH_DOC.md` §4.7
+- **Refined by:** ADR-0015 — this ADR fixed contact *outcomes* but said nothing about vertical *support*; the
+  sensor-declares / motor-interprets seam closes that gap. The pure-resolver and two-hit-stumble rules stand.
 
 ## Context
 

@@ -3,6 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-10-31
 - **Contract:** `TECH_DOC.md` §4.6, §11.2
+- **Refined by:** ADR-0014 — pool keys are strings (not component + key type), origin roots are discrete with
+  listeners re-basing accumulators, and run distance is an accumulated scalar. Pooling-only and chunk
+  recycling are unchanged.
 
 ## Context
 
@@ -20,6 +23,8 @@ bound, which eventually destroys float precision (jitter in transforms, physics,
 3. **Floating origin:** when the player passes a fixed distance threshold, all active roots (track,
    player, chaser, particles, decals, audio) are translated by `-threshold` and a double
    `OriginOffset` is incremented. All distance/score maths uses `OriginOffset + local`.
+   *(as written — corrected by ADR-0014: the track root is not translated, and distance/score maths must never
+   read `OriginOffset`; it is bookkeeping for absolute-position consumers only)*
 
 ## Consequences
 

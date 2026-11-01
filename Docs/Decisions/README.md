@@ -12,6 +12,7 @@ Template:
 - **Date:** YYYY-MM-DD
 - **Contract:** TECH_DOC.md §x.y
 - **Supersedes:** —
+- **Refined by:** —   (optional: a later ADR that narrows part of this decision without superseding it)
 
 ## Context
 ## Decision
@@ -38,3 +39,6 @@ Template:
 | [0010](ADR-0010-cloud-conflict-resolution.md) | Cloud conflict: revision + baseline, authoritative slices | Accepted | §4.17.1, §5.15 |
 | [0011](ADR-0011-remote-config-and-feature-flags.md) | Typed RC keys with defaults + feature flags | Accepted | §4.16, §9 |
 | [0012](ADR-0012-addressables-and-asset-delivery.md) | Addressables everywhere + Play Asset Delivery | Accepted | §2.3, §4.20, §11.1 |
+| [0013](ADR-0013-contract-unit-files.md) | Contract-unit files instead of strict one-type-per-file | Accepted | §13.2 |
+| [0014](ADR-0014-pool-keys-and-origin-rebasing.md) | String pool keys, discrete origin roots, run distance as a scalar | Accepted (refines 0007) | §4.4, §4.5, §4.6, §15 |
+| [0015](ADR-0015-support-surface-seam.md) | Support surfaces: the sensor declares, the motor interprets | Accepted (refines 0006) | §4.4, §4.7 |

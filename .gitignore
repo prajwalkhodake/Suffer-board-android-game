@@ -52,10 +52,10 @@ service-account*.json
 .secrets/
 
 # ---- Addressables / bundles ----
+# Generated content only: the .asset and .json files under AddressableAssetsData ARE source and are tracked.
 /[Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
 /[Aa]ssets/[Ss]treamingAssets/aa/*
 !/[Aa]ssets/[Ss]treamingAssets/aa.meta
-!/[Aa]ssets/[Ss]treamingAssets/aa/*
 
 # ---- Burst / IL2CPP generated ----
 *.tmp

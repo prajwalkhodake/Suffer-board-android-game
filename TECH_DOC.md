@@ -116,7 +116,7 @@ SKYRIFT is a portrait-orientation, three-lane, forward-auto-run 3D endless runne
 | Item | Contract |
 |---|---|
 | Scripting define symbols per environment | `DEV`, `QA`, `PROD` plus feature defines (`SKYRIFT_FIREBASE`, `SKYRIFT_PLAYGAMES`, `SKYRIFT_ADS`, `SKYRIFT_IAP`). Absence of a define must compile and run with mock services. |
-| Managed stripping | High; `link.xml` preserves SDK entry points; never rely on reflection-only models |
+| Managed stripping | IL2CPP only — never Mono. The level is **a build-tuning decision, not an architectural one**, so the value in force is in the editor setup tool and `CHANGELOG.md`, not here. The rule: anything reached only by reflection (serialised models, vendor SDK entry points, JSON DTOs) must be preserved explicitly by a `link.xml` in the same change that introduces the reflection, and the level may only be raised once every such consumer is listed. Gameplay code stays reflection-free so this never applies to it. |
 | Symbols | `libil2cpp.so` symbols uploaded to Crashlytics each release build |
 | Base install | AAB base module ≤ **150 MB**; everything else via Addressables + **Play Asset Delivery** (install-time for core worlds, fast-follow for events) |
 | Keystore | Upload key in CI secret store; the project never stores a `.keystore` in git |
@@ -258,7 +258,7 @@ Every subsystem below follows the same documentation shape: **Responsibility →
 | `IEventBus` | `Subscribe<T>(Action<T> handler) where T : struct, IGameEvent`, `Unsubscribe<T>(Action<T>)`, `Publish<T>(in T evt)`. One bus for domain events, one for UI events. Subscribe at enable/`OnInit`, always unsubscribe at disable/`OnDispose`. Never publish from a `FixedUpdate` while iterating subscribers — the bus snapshots the handler list per dispatch using a pre-allocated buffer. |
 | `IServiceContainer` | `Register<T>(T impl)`, `RegisterLazy<T>(Func<T>)`, `Resolve<T>()`, `TryResolve<T>(out T)`. Resolution at composition time only; gameplay code receives dependencies via `Construct(...)`/`[Inject]` at spawn, never `Resolve` per frame. |
 | `IGameStateMachine<TState>` | `TState Current`, `bool TryTransition(TState next)`, `event Action<TState, TState> Transitioned`. Transitions are declared in a table (see §6.1); illegal transitions log an error and are refused. |
-| `IObjectPool<T>` | `T Get()`, `void Release(T)`, `void Prewarm(int)`, `PoolStats Stats`. Non-generic `IPoolable { void OnSpawned(); void OnDespawned(); }`. Zero allocation on `Get`/`Release`. |
+| `IObjectPool<T>` | `string Key`, `bool GrowthAllowed`, `PoolStats Stats`, `T Get()`, `void Release(T)`, `void ReleaseAll()`, `void Prewarm(int)`. Non-generic `IPoolable { void OnSpawned(); void OnDespawned(); }`. Zero allocation on `Get`/`Release`. Pools are reached through `IPoolRegistry` by **string** key (§4.6, ADR-0014). |
 | `IClock` | `float DeltaTime`, `float UnscaledDeltaTime`, `double NowUtcTicks`. All gameplay timing uses `IClock` so tests can drive time deterministically. |
 | `IRandomProvider` | `uint NextUInt()`, `int Range(int minInc, int maxExc)`, `float Value01()`, `IRandomProvider Fork(string streamName)`. Seeded; the run seed is logged and is reproducible for daily challenges and bug reports. |
 | `Result` / `Result<T>` | `Ok(...)`, `Fail(code, message)`; used by every fallible service call. No exceptions for expected failures. |
@@ -356,26 +356,46 @@ public interface IInputCommandBuffer {
 ```csharp
 public enum PlayerVerticalState { Grounded, Jumping, Falling, Rolling }
 public interface IPlayerMotor {
-    int Lane { get; }                       // 0..LaneCount-1
+    int Lane { get; }                       // 0..laneCount-1, already retargeted mid-interpolation
     float DistanceRun { get; }              // metres, monotonically increasing through run
-    float CurrentSpeed { get; }             // metres/second
+    float CurrentSpeed { get; }
     PlayerVerticalState VerticalState { get; }
     bool IsInvulnerable { get; }
+    bool IsRecovering { get; }              // stumble slow-down still running
+    float HeightAboveGround { get; }        // feet above the WORLD ground plane (clearance reads this)
+    float CurrentHeight { get; }            // collision volume height, shorter while rolling
+    float GroundHeight { get; }             // top of the surface the rig is supported by, 0 = ground
+    float LateralPosition { get; }          // interpolated world X, mid-lane-change included
+    float ForwardOffset { get; }            // rig Z inside the current origin-shift window; wraps
     void RequestLaneChange(int delta);      // clamped to the lane count
     void RequestJump(float heightMultiplier = 1f);
     void RequestRoll();
+    void RequestLaunch(float upwardVelocity);        // ramp / rooftop launch, may act mid-air
     void SetSpeedProfile(SpeedProfileHandle profile);
     void ResetForRun(RunStartContext ctx);
+    void Tick(float dt);                    // the controller owns the simulation order
+    void NotifyStumble();
+    void SetInvulnerable(float seconds);
+    void SetSupportHeight(float metres);    // sensor declares, motor interprets (ADR-0015)
+    void AddJumpModifier(IJumpModifier m);   void RemoveJumpModifier(IJumpModifier m);
+    void AddSpeedModifier(ISpeedModifier m); void RemoveSpeedModifier(ISpeedModifier m);
+    void SetLaneChangeRule(ILaneChangeRule rule);
 }
 ```
+
+`Tick`, `NotifyStumble`, `SetInvulnerable` and `SetSupportHeight` are part of the contract because the motor
+never reads a clock, never runs its own `Update`, never decides why it was stumbled and never learns what an
+obstacle **is** (ADR-0015).
 
 **Rules**
 
 - Lane change is a smooth interpolation toward the target lane's X (curve + duration from `BalanceConfig`); a second swipe mid-interpolation retargets without snapping. Lateral "queue depth" is capped at 1 pending lane change.
 - Jump/roll cancel each other; roll has a minimum duration and a maximum duration; jump height/time is modulated by the active speed profile and any jump-modifier contributions (e.g. super-sneakers) — modifiers are **contributions**, not booleans (`IJumpModifier`).
 - Speed: `SpeedProfile` is a piecewise curve over `DistanceRun` with a cap and a difficulty scalar from Remote Config (§9). Speed never decreases within a run except on stumble recovery.
+- Vertical motion is integrated against `GroundHeight`, **not** against zero (ADR-0015). `SetSupportHeight` is called by the contact sensor — the only system that reads physics — with the top of the mountable surface the rig is over, or 0. The motor decides what that means: land on it, step up onto it, or fall off its far edge. Losing the surface is a fall from rest rather than a snap to the ground plane, so walking off a roof reads as a drop. `HeightAboveGround` stays measured from the world ground plane so clearance maths remains absolute and a contact check cannot be fooled by a roof.
+- Landing, step-up and fall-off are resolved from the **simulated step**, never from a rendered frame, so rooftop support behaves identically at 30 and 120 fps.
 - Animation is driven by `PlayerAnimationDriver` reading motor state; no animation events drive gameplay.
-- The player never moves in world Z directly — see floating origin in §4.6.
+- The player never moves in world Z directly — the rig carries `ForwardOffset` inside the current origin-shift window and `DistanceRun` is an accumulated scalar; see floating origin in §4.6.
 
 **Publishes:** `PlayerLaneChangedEvent`, `PlayerJumpedEvent`, `PlayerLandedEvent`, `PlayerRollStartedEvent`, `PlayerRollEndedEvent`, `PlayerSpeedChangedEvent`.
 **Consumes:** `InputIntent` via `IRunController` (motor never subscribes to input itself).
@@ -389,12 +409,36 @@ public interface IPlayerMotor {
 
 ```csharp
 public interface ITrackGenerator {
-    void Initialize(TrackGenerationConfig config, ISeededRandom seed);
-    ChunkHandle PeekNext(int lookahead = 1);
+    void Initialize(in TrackRunContext ctx);       // run-scoped dependency bundle, see below
+    ChunkHandle PeekNext(int lookahead = 1);       // query only, never mutates the track
     void EnsureCoverage(float playerDistance);     // called each frame, allocation-free
     void Recycle(float playerDistance);            // returns chunks fully behind the player
+    void SetPlayerSpeed(float metresPerSecond);    // feeds the difficulty model
+    void SetDifficultyScale(float scale);          // run-scoped RC scalar; Initialize resets it to 1
+    void Shutdown();                               // release every live chunk
     TrackDebugState Debug { get; }
+    int LiveCount { get; }
+    ChunkHandle GetLive(int index);                // ordered, oldest first
+    void AddEligibilityRule(IChunkEligibilityRule rule);
+    void AddSelectionWeight(IChunkSelectionWeight weight);
 }
+
+// Everything a run needs to generate track, passed once. Carrying the pool registry, the origin shifter,
+// the bus and the populator here — instead of as Initialize arguments — is what keeps a new generator
+// dependency from changing the signature every subsystem already agreed on.
+public readonly struct TrackRunContext {
+    public readonly TrackGenerationConfig Config;
+    public readonly WorldDefinition World;
+    public readonly IGameDatabase Database;
+    public readonly IRandomProvider Random;        // forked "track" stream (ADR-0005)
+    public readonly IPoolRegistry Pools;
+    public readonly IEventBus Bus;
+    public readonly ILog Log;
+    public readonly IWorldOriginShifter Origin;
+    public readonly Transform TrackRoot;
+    public readonly IChunkPopulator Populator;
+}
+
 public interface IChunkEligibilityRule {          // extension point, data-registered
     bool IsEligible(in ChunkCandidateContext ctx);
 }
@@ -403,19 +447,24 @@ public interface IChunkSelectionWeight {          // extension point, data-regis
 }
 ```
 
+An incomplete `TrackRunContext` is refused at `Initialize` (logged, generator stays inert) rather than
+throwing: a null dependency is an authoring or wiring error that must be visible at boot, not a
+`NullReferenceException` three chunks later.
+
 **Selection algorithm (contract, not a config value)**
 
 1. Compute `targetDifficulty` from `DistanceRun`, run speed and the world's difficulty curve.
-2. From `ChunkRepository` take all chunks whose: world tag matches, difficulty band contains `targetDifficulty`, entry-lane mask matches the previous chunk's exit-lane mask, per-chunk cooldown has elapsed, and **all** `IEligibilityRule`s pass.
-3. Weight each candidate by its authored base weight × every `IChunkSelectionWeight` contribution × repeat penalty (recently used ⇒ reduced weight).
-4. Weighted-pick with the seeded RNG; if nothing is eligible, fall back to the guaranteed "safe" chunk set for the current world and report telemetry `track_generation_fallback`.
-5. Guarantee every generated sequence leaves at least one traversable lane; validation is part of EditMode tests (`GeneratorDeterminismTests`, `GeneratorReachabilityTests`).
+2. From `ChunkRepository` take all chunks whose: world tag matches, difficulty band contains `targetDifficulty`, entry-lane mask matches the previous chunk's exit-lane mask (all lanes at the start of a run), per-chunk cooldown has elapsed, and **all** `IChunkEligibilityRule`s pass. The rule list is the whole filter — the generator has no built-in branch of its own, so a new hard constraint is a rule, not an edit.
+3. Weight each candidate by every `IChunkSelectionWeight` contribution multiplied together (authored base weight, repeat penalty, difficulty fit), short-circuiting as soon as the product reaches zero — a zero is a veto, not a discount.
+4. Weighted-pick with the seeded RNG; if nothing is eligible, fall back to the guaranteed "safe" chunk set for the current world and report telemetry `track_generation_fallback`. If even the fallback is empty, the track cannot continue: logged, counted, and the generator stops rather than inventing geometry.
+5. Guarantee every generated sequence leaves at least one traversable lane. This is proven by an EditMode corpus walk of the same conjunction of rules (§12.1), run against every authored chunk set — a set that dead-ends at a difficulty the ramp will certainly reach must not ship.
 
 **Rules**
 
-- Chunks are prefab-backed Addressables; the generator deals in `ChunkHandle` (pool slot + anchors) and never `Instantiate`.
-- The generator holds **no** gameplay logic. Spawn anchors are declared by the chunk prefab (`ChunkDefinition` + `SpawnAnchor` components); populating a chunk from its definition is `ChunkPopulator`'s job (pooled spawns of obstacles/collectibles).
-- Determinism: same seed + same catalogs + same RC values ⇒ same sequence. Required for daily challenges and repro of bug reports.
+- Chunks are prefab-backed content addressed by the catalog; the generator deals in `ChunkHandle` (pool slot + anchors) and never `Instantiate`. Delivery through Addressables is §4.20 / ADR-0012; the generator's own **content** dependency is `IGameDatabase` alone — everything else it touches (pools, bus, origin, populator) arrives through `TrackRunContext`, so a new generator dependency is a context field, not a new module edge.
+- The generator holds **no** gameplay logic. Spawn anchors are declared by the chunk prefab (`ChunkDefinition` + `ChunkRoot`); populating a chunk from its definition is the `IChunkPopulator` the run controller injects (pooled spawns of obstacles/collectibles). The **interface** is declared in Track so the generator can name it without knowing gameplay; the shipped **implementation** lives in Gameplay, because populating needs obstacle behaviours — that direction is the DAG, not a preference (§3.3).
+- Live chunks are re-based on an origin shift through `IOriginShiftListener` rather than being parented to a shifted root (§4.6, ADR-0014).
+- Determinism: same seed + same catalogs + same RC values ⇒ same sequence. Required for daily challenges and repro of bug reports. Subsystems draw from **forked** streams so adding a consumer cannot change an existing run's layout (ADR-0005).
 
 **Publishes:** `ChunkActivatedEvent`, `ChunkRecycledEvent`, `TrackFallbackEvent`.
 **Consumes:** `RunStartedEvent`, `PlayerSpeedChangedEvent`, `WorldChangedEvent`.
@@ -429,23 +478,54 @@ public interface IChunkSelectionWeight {          // extension point, data-regis
 
 ```csharp
 public interface IPoolRegistry {
-    IObjectPool<TComponent> GetPool<TComponent>(PoolKey key) where TComponent : Component;
-    void PrewarmAllRunPools();
+    void Register(PoolEntry entry, Transform parent);        // one row of PoolCatalog per key
+    IObjectPool<PooledEntity> GetPool(string key);           // throws and names the key when unregistered
+    bool TryGetPool(string key, out IObjectPool<PooledEntity> pool);
+    void PrewarmAll();                                       // loading phase only
+    void SetGrowthAllowed(bool allowed);                     // flipped off for the whole run
+    void ReleaseAll();
+    IReadOnlyList<string> Keys { get; }
+    int OverflowCount { get; }                               // aggregate, for telemetry
 }
+public interface IObjectPool<T> where T : PooledEntity {
+    string Key { get; }
+    bool GrowthAllowed { get; set; }
+    PoolStats Stats { get; }          // struct snapshot: Active / Inactive / Created / Overflow
+    T Get();
+    void Release(T item);
+    void ReleaseAll();
+    void Prewarm(int count);          // targets the TOTAL instance count, so it is idempotent
+}
+public interface IPoolable { void OnSpawned(); void OnDespawned(); }
+
 public interface IWorldOriginShifter {
-    double OriginOffset { get; }     // metres shifted so far
-    void ShiftIfNeeded(float playerDistance);   // shifts at a power-of-two threshold
+    double OriginOffset { get; }                        // metres shifted so far, always a multiple of the threshold
+    void Configure(float thresholdMetres);              // power of two; non-positive falls back to the default
+    void ShiftIfNeeded(float playerDistance);           // at most ONE threshold per call — call every frame
+    void RegisterRoot(Transform root);   void UnregisterRoot(Transform root);
+    void RegisterListener(IOriginShiftListener l); void UnregisterListener(IOriginShiftListener l);
+    void ResetForRun();                                 // reverses every root and zeroes the offset
 }
+public interface IOriginShiftListener { void OnOriginShifted(double deltaMetres); }
 ```
+
+A pool is keyed by **string**, not by `Component` type (ADR-0014): a chunk, an obstacle and a coin differ by
+prefab and by prewarm budget, not by component type, and a `PooledEntity` subclass is what carries the
+behaviour a typed `Get<Component>()` would have implied. `PoolKey` as a distinct value type was dropped for
+the same reason the catalog is a data asset of strings — a second spelling of the same thing drifts.
 
 **Rules**
 
-- Every pooled prefab is registered in a `PoolCatalog` asset (key, prefab, prewarm count, category). Nothing is created ad-hoc.
-- Pools grow on demand only during a **loading** phase, never mid-run; a mid-run growth attempt logs `pool_overflow` telemetry and reuses the eldest active item instead of instantiating.
-- Floating origin: when the player passes a threshold distance, all active track/player/chaser/sub-system roots shift by `-threshold` along the travel axis, `OriginOffset += threshold`, and any absolute-position bookkeeping (particles, trails, audio-occlusion, decals) is notified through `IOriginShiftListener`. Score/distance is computed from `OriginOffset + local`, never from a raw world Z.
+- Every pooled prefab is registered in a `PoolCatalog` asset (key, prefab, prewarm count, category). Nothing is created ad-hoc. A row that cannot be pooled is skipped with an error rather than aborting the boot of the other rows.
+- Pools grow on demand only during a **loading** phase, never mid-run; a mid-run exhaustion recycles the **eldest active** item (the one furthest behind the player, so the one the run has least use for), runs its release hook first, and reports `pool_overflow` telemetry. An empty pool that is not allowed to grow still creates one instance rather than handing `null` into the gameplay loop.
+- `OnSpawned` runs **after** `SetActive(true)` and `OnDespawned` **before** `SetActive(false)`, so a hook can always read and reset the object it is handed; the spawner positions the instance after `Get`, so a hook must never depend on a transform it does not own.
+- `activeSelf` is the spawn flag: releasing an already-inactive instance is ignored, which is what stops a double release from putting one object on the free list twice.
+- Floating origin: when the player has travelled another threshold since the last shift, every **registered root** moves back by `-threshold` on the travel axis and `OriginOffset += threshold`. Roots are discrete (player rig, chaser rig, VFX root), not one world parent: anything that stores an accumulating local coordinate must re-base itself through `IOriginShiftListener` instead (live chunks do), because translating a parent *and* accumulating inside it is the precision loss the shift exists to prevent (ADR-0014). Released pooled objects are deliberately **not** registered — they hold no live position.
+- **Run distance is an accumulated scalar and is never derived from a world coordinate**, so a shift cannot change a score, a distance or a difficulty ramp. `OriginOffset` exists only so absolute-position bookkeeping (trails, decals, particle simulation space, audio occlusion) can subtract the delta; the rig's own Z inside the current window is exposed as `ForwardOffset` and wraps at the threshold.
+- Duplicate registrations are refused on both roots and listeners, a destroyed root is stepped over rather than fatal, and `ShiftIfNeeded` performs at most one shift per call so a sudden teleport is unwound over several frames instead of one giant pop.
 - Recycled chunks reset all particle systems, audio sources and pooled children (`IPoolable.OnDespawned`).
 
-**Publishes:** `OriginShiftedEvent(double newOffset)`.
+**Publishes:** `OriginShiftedEvent(double newOffset, double deltaMetres)` — the delta is carried because a listener needs what moved *this* shift, not the running total.
 **Consumes:** `ChunkRecycledEvent`.
 **Extension point:** `IPoolable`, `IOriginShiftListener`, `PoolCatalog` (data).
 
@@ -457,22 +537,35 @@ public interface IWorldOriginShifter {
 
 ```csharp
 public enum ContactOutcome { Ignored, Grazed, Stumbled, Crashed, Cleared }
+public enum ContactSurface { Head, Torso, Feet, Side, Top }
 public readonly struct ContactContext {
-    public readonly ContactSurface Surface;      // Head, Torso, Feet, Side, Top
+    public readonly ContactSurface Surface;
     public readonly int PlayerLane, ObjectLane;
-    public readonly float PlayerSpeed, RelativeSpeed, HeightAboveGround;
+    public readonly float PlayerSpeed, RelativeSpeed;      // RelativeSpeed <= 0 = object outruns the player
+    public readonly float HeightAboveGround;               // feet above the WORLD ground plane
+    public readonly float PlayerHeight, ObjectHeight;      // volume top vs object top
+    public readonly float LateralOffset;                   // centre distance in lane widths
     public readonly PlayerVerticalState VerticalState;
     public readonly bool HasShield;
+    public readonly ClearanceProfile Clearance;            // authored jump/roll/mount windows
+    public readonly IObstacleBehaviour Behaviour;          // the archetype, carried in, not looked up
+    public readonly BalanceConfig Balance;                 // forgiveness + graze thresholds travel too
 }
 public interface ICollisionResolver {
     ContactOutcome Resolve(in ContactContext ctx);   // pure, allocation-free, unit-testable
     int StumbleCount { get; }                        // resets at run start / continue
     void ResetForRun();
+    void ResetStumbles();                            // a continue forgives, without a full run reset
 }
 public interface IObstacleBehaviour {                // per obstacle archetype
     ContactOutcome Resolve(in ContactContext ctx);
 }
 ```
+
+Clearance data, the archetype behaviour and the balance thresholds travel **inside** the context. That is
+what makes both the resolver and every behaviour a pure function of its input: nothing in §4.7 resolves a
+catalog or a config asset at contact time, which is why the whole model is testable with constructed inputs
+(ADR-0006).
 
 **Outcome rules (contract; magnitudes are data)**
 
@@ -483,11 +576,17 @@ public interface IObstacleBehaviour {                // per obstacle archetype
 | Side scrape with a barrier at ground level (not head-on) | `Stumbled` on the **first** hit in a run, `Crashed` on the second |
 | Head-on hit into a full blocker / train at run speed | `Crashed` (instant) |
 | Any contact while a crash-absorbing power-up is active | absorb, consume the charge, `Grazed` |
-| Contact with a ramp surface | `Cleared` + launch impulse |
+| Contact with a ramp surface | `Cleared` + launch impulse (only when the contact is on `Top` and the surface is mountable) |
+
+Classification order for a mountable/clearable obstacle is jump clearance → roll clearance → mount height →
+lateral graze, and the last step is what separates a side scrape from a head-on hit:
+`LateralOffset >= grazeLateralThreshold ? Stumbled : Crashed`. Shield substitution to `Grazed` happens in the
+**resolver** (which owns the escalation), not in a behaviour.
 
 - `ICollisionResolver` is pure: same context ⇒ same outcome. All "state" is the stumble counter, exposed and resettable.
 - Physics is **not** used for obstacle contact: contacts come from trigger volumes + the resolver (deterministic, testable, cheap). Rigidbody is used only for the player's own gravity/ground checks.
-- A stumble briefly slows the player, plays the stumble animation, and notifies the chaser (§4.8); the second stumble in the same run crashes.
+- The sensor that reports contacts is also the only system that declares the motor's support surface (§4.4, ADR-0015), because it is the only one that reads physics.
+- A stumble briefly slows the player, plays the stumble animation, and notifies the chaser (§4.8); the second stumble in the same run crashes. Only a `Stumbled` outcome increments the counter.
 
 **Publishes:** `PlayerStumbledEvent(count)`, `PlayerCrashedEvent(CrashCause cause, in CrashContext ctx)`, `ContactResolvedEvent(outcome)` (debug/telemetry only).
 **Consumes:** nothing (called by `PlayerContactSensor`).
@@ -1147,25 +1246,34 @@ sequenceDiagram
     participant U as UI (Home)
     participant F as GameFlow
     participant R as RunController
-    participant W as World/Character (Meta)
-    participant G as TrackGenerator
+    participant D as Data (catalogs)
     participant P as PoolRegistry
-    participant S as RunSystems (motor, chaser, score, powerups, audio)
+    participant S as RunSystems (motor, chaser, resolver, score, sensor, audio)
+    participant G as TrackGenerator
 
     U->>F: PlayPressed
-    F->>R: StartRunAsync(ctx)
-    R->>W: ResolveWorld + LoadCharacter + Perks
-    W-->>R: RunStartContext (seed, world, perks, modifiers)
-    R->>G: Initialize(config, seededRng)
-    R->>P: PrewarmAllRunPools()
-    R->>S: ResetForRun(ctx)
-    G->>G: EnsureCoverage(0)
-    R-->>F: Ok
+    F->>R: StartRunAsync(RunStartContext)
+    Note over R: ctx carries seed, world, character, board,<br/>RC speed + difficulty scalars, start lane
+    R->>D: ResolveWorld(worldId)
+    D-->>R: WorldDefinition + Balance/Track/Input configs
+    R->>R: TeardownRun (release previous content, reset origin)
+    R->>P: SetGrowthAllowed(true) → PrewarmAll() → SetGrowthAllowed(false)
+    R->>S: ResetForRun — each system, from the run's forked RNG streams
+    R->>G: Initialize(in TrackRunContext)
+    G->>G: generate the opening runway
+    R->>F: TryTransition(Running)
     F-->>U: FlowChanged(Running)
     R->>R: emit RunStartedEvent
 ```
 
-Failure at any step: pools released, flow returns to `Home`, `run_start_failed{step}` is tracked.
+The pool prewarm happens **before** any system is reset or a chunk is spawned, and growth is switched off
+again immediately afterwards: from the first tick onward, a pool miss is a defect to be reported rather than
+an `Instantiate` to be hidden (§4.6, ADR-0007).
+
+Every failure path returns a typed `Result` and lands the controller back in `Idle` with the previous run's
+content released — a refused start never leaves a half-built simulation running. The controller does not own
+screens, so recovering the *flow* (back to `Home`) is the caller's decision, taken from the returned error
+code. Telemetry attaches the step that failed.
 
 ### 6.3 Crash → continue → results
 
@@ -1179,30 +1287,36 @@ sequenceDiagram
     participant E as Economy
     participant A as Ads
 
-    P->>C: Resolve(ContactContext)
-    C-->>R: Crashed (head-on or 2nd stumble)
+    P->>C: Resolve(in ContactContext)
+    C-->>R: publishes PlayerCrashedEvent(cause, context)
+    Note over C,R: the bus is the only crash transport — the resolver holds no<br/>reference to the controller, so a crash can originate in a sensor,<br/>a behaviour, a debug key or a test without changing either party
     R->>R: freeze run clock, play crash sequence
     R-->>F: Crashed
-    R->>R: BuildContinueOffer() (policy + RC gates)
+    R->>R: BuildContinueOffer (policy + RC gates)
     alt offer available
-        F->>U: show offer (key cost, ad option)
+        F->>U: ContinueOffer (key cost, ad option, countdown)
+        Note over R: the countdown runs on unscaled time; expiry ends the run with<br/>reason ContinueDeclined while the recorded cause stays the crash
         U->>E: TrySpend(keys, cost)
         alt keys ok
-            E-->>R: RunContinued(Keys)
-            R->>F: Running
+            E-->>R: TryContinueAsync(Keys) → Ok
+            R->>F: Running (invulnerability + cleared respawn window)
         else ad chosen
             U->>A: ShowRewarded(continue)
-            A-->>R: RunContinued(RewardedAd)
+            A-->>R: TryContinueAsync(RewardedAd) → Ok
             R->>F: Running
         else declined
-            R->>R: EndRun(crash) -> commit score, wallet, missions, save
+            R->>R: EndRun(ContinueDeclined) → commit score, wallet, missions, save
             R-->>F: Results
         end
     else
-        R->>R: EndRun(crash) -> commit
+        R->>R: EndRun(Crash) → commit
         R-->>F: Results
     end
 ```
+
+A grant is only honoured if the controller is still in `ContinueOffer` when the payment or ad callback lands;
+if the countdown expired first the offer is refused and the run stays ended. A player cannot buy their way
+back into a run the game has already closed (§4.12).
 
 ### 6.4 Purchase (IAP and soft currency)
 
@@ -1652,7 +1766,7 @@ Rules: a system with a public contract ships with at least one test per branch o
 
 ### 13.2 Code rules
 
-1. One public type per file; file name = type name.
+1. One public **service/behaviour** type per file, file name = type name. An interface, its implementations and the value types that form its signature (enums, `readonly struct` payloads, context/breakdown structs) may share one file named after the primary type. A family of sibling strategy implementations may share a file named `<Family>.cs`.
 2. Every public interface/base class has an XML doc comment stating its contract and who may call it.
 3. No `public` fields (except `[Serializable]` DTOs with a comment); properties or `[SerializeField] private`.
 4. No singletons except the composition-root-owned `IServiceContainer`; no `static` mutable state outside Core.
@@ -1728,7 +1842,7 @@ Adding a feature should mean **writing one class and/or one asset**. If a change
 | 18 | `IChunkEligibilityRule` / `IChunkSelectionWeight` | Track | new generation rules | `TrackGenerator` |
 | 19 | `IChunkPopulator` | Track | new per-chunk decoration pass | generator, pool |
 | 20 | `IPoolable` / `PoolCatalog` entry | Core / Data | new pooled object | pool registry |
-| 21 | `IOriginShiftListener` | Core | react to floating-origin shift | run controller |
+| 21 | `IOriginShiftListener` | Track | react to floating-origin shift | run controller |
 | 22 | `IMissionEvaluator` | Meta | new mission type | mission service, UI, rotation |
 | 23 | `IEventParticipationRule` | Meta | event entry rules | event service |
 | 24 | `IWorldResolver` | Meta | pick world (schedule/RC/AB) | boot, run start |
@@ -1760,6 +1874,8 @@ Only append here when an **architectural contract** changes (dependency arrows, 
 | Rev | Date | Author | Contract change | ADR |
 |---|---|---|---|---|
 | 1.0.0 | 2026-10-31 | Architecture | Initial contract: modules, DAG, 42 extension points, save v1 mechanism, RC/analytics registries | ADR-0001 … ADR-0012 |
+| 1.0.1 | 2026-11-01 | Architecture | §13.2 rule 1 clarified: contract-unit files (interface + implementations + signature value types) are permitted, to keep small value types from exploding the file count. No interface, DAG or schema change. | ADR-0013 |
+| 1.0.2 | 2026-11-01 | Architecture | M1 contracts reconciled to the shipped surface; no DAG or save change. **§4.4** motor gains `GroundHeight`, `ForwardOffset`, `SetSupportHeight` and the sensor-declares/motor-interprets split. **§4.5** `Initialize(config, rng)` replaced by `Initialize(in TrackRunContext)` — a run-scoped bundle, so a new generator dependency cannot reopen a signature every subsystem agreed on. **§4.6** pools keyed by string, not component type; origin roots are discrete and listeners re-base themselves; **run distance corrected to an accumulated scalar** (the previous "computed from `OriginOffset + local`" wording was wrong, not just stale); `OriginShiftedEvent` carries the delta. **§4.7** `ContactContext` is the shipped 14-field struct with clearance, behaviour and balance travelling inside it; `ResetStumbles()` named; classification order and shield substitution assigned to the resolver. **§6.2/§6.3** run-start and crash sequences redrawn on the real call order, with the bus as the only crash transport. `IChunkPopulator`/`IOriginShiftListener` assembly column corrected in §15. **§2.3** managed-stripping level restated as a build-tuning value rather than a contract constant: the `link.xml` rule survives, the "High" number does not. | ADR-0014, ADR-0015 |
 
 ---
 
