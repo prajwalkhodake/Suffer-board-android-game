@@ -1,0 +1,19 @@
+{
+    "name": "Skyrift.Meta",
+    "rootNamespace": "Skyrift.Meta",
+    "references": [
+        "Skyrift.Core",
+        "Skyrift.Data",
+        "Skyrift.Economy",
+        "Skyrift.Services.Abstractions"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

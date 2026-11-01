@@ -1,0 +1,20 @@
+{
+    "name": "Skyrift.Gameplay",
+    "rootNamespace": "Skyrift.Gameplay",
+    "references": [
+        "Skyrift.Core",
+        "Skyrift.Data",
+        "Skyrift.Track",
+        "Skyrift.Controls",
+        "Skyrift.Audio"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

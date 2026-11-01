@@ -1,0 +1,37 @@
+{
+    "name": "Skyrift.Editor",
+    "rootNamespace": "Skyrift.Editor",
+    "references": [
+        "Skyrift.Core",
+        "Skyrift.Data",
+        "Skyrift.Services.Abstractions",
+        "Skyrift.Services",
+        "Skyrift.Audio",
+        "Skyrift.Controls",
+        "Skyrift.Track",
+        "Skyrift.Economy",
+        "Skyrift.Meta",
+        "Skyrift.Gameplay",
+        "Skyrift.UI",
+        "Skyrift.Bootstrap",
+        "UnityEngine.UI",
+        "Unity.TextMeshPro",
+        "Unity.InputSystem",
+        "Unity.Addressables",
+        "Unity.Addressables.Editor",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Universal.Editor",
+        "Unity.RenderPipelines.Core.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

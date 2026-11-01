@@ -1,0 +1,30 @@
+{
+    "name": "Skyrift.Bootstrap",
+    "rootNamespace": "Skyrift.Bootstrap",
+    "references": [
+        "Skyrift.Core",
+        "Skyrift.Data",
+        "Skyrift.Services.Abstractions",
+        "Skyrift.Services",
+        "Skyrift.Audio",
+        "Skyrift.Controls",
+        "Skyrift.Track",
+        "Skyrift.Economy",
+        "Skyrift.Meta",
+        "Skyrift.Gameplay",
+        "Skyrift.UI",
+        "UnityEngine.UI",
+        "Unity.TextMeshPro",
+        "Unity.InputSystem",
+        "Unity.Addressables"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -1,0 +1,17 @@
+{
+    "name": "Skyrift.Audio",
+    "rootNamespace": "Skyrift.Audio",
+    "references": [
+        "Skyrift.Core",
+        "Skyrift.Data"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

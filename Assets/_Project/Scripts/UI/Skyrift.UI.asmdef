@@ -1,0 +1,25 @@
+{
+    "name": "Skyrift.UI",
+    "rootNamespace": "Skyrift.UI",
+    "references": [
+        "Skyrift.Core",
+        "Skyrift.Data",
+        "Skyrift.Meta",
+        "Skyrift.Economy",
+        "Skyrift.Gameplay",
+        "Skyrift.Services.Abstractions",
+        "Skyrift.Audio",
+        "UnityEngine.UI",
+        "Unity.TextMeshPro",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
