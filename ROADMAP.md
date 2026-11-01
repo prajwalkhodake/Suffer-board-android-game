@@ -51,11 +51,15 @@ met**, because no build has been made and no frame has been profiled.
 
 - [ ] Open in Unity 2022.3.62f1, run `Build M1 Greybox` + `Validate Catalog`, and clear every compile error and
       warning. This is the first real verification of ~20 k lines written without a compiler.
-- [ ] Run both test fixtures; triage failures (the PlayMode greybox suite is the one most likely to disagree with
+- [ ] Run all four PlayMode fixtures; triage failures (the greybox suite is the one most likely to disagree with
       a real first frame).
-- [ ] Add the generator-sequence determinism test (same seed ⇒ same chunk ids) once chunk prefabs exist.
-- [ ] Add the 60 s soak PlayMode test and record the measured `GC Allocated In Frame` + median frame time in
-      `CHANGELOG.md` — replacing the two target numbers with measurements.
+- [x] Generator-sequence determinism test written: same seed ⇒ same chunk ids, draw order and start distances,
+      asserted through the shipped wiring rather than only at the RNG and rule layers. Unrun, like everything else.
+- [x] 60 s soak PlayMode test written: invulnerable rig so a fixed-length soak cannot be truncated by a crash,
+      per-frame `ProfilerRecorder` sampling calibrated against the harness's own floor, plus survival,
+      recycling-bound, zero-fallback and zero-overflow assertions.
+- [ ] Run the soak once and record the measured `GC Allocated In Frame` floor/average/worst and chunk throughput
+      in `CHANGELOG.md` — the test logs them, so this is a copy-paste job after step 1, not more code.
 - [ ] One device run (API 26-ish ARM64 mid-range) with the dev overlay visible; check the shift is invisible and
       the chaser tracks through it.
 

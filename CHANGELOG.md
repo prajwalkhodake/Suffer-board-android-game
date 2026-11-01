@@ -76,12 +76,15 @@ even the overwrite variant leaves authored *numbers* alone, so a tuned config su
 checks trigger size against authored footprint, the graze band, lane coverage and spacing, the ramp→roof launch
 corridor, and address/pool-key consistency. `SettingsEnforcer` keeps player settings and defines from drifting.
 
-**Tests** — 5 EditMode fixtures (132 cases, 12 of them parameterised) and 3 PlayMode fixtures (26 cases plus 9
+**Tests** — 5 EditMode fixtures (132 cases, 12 of them parameterised) and 4 PlayMode fixtures (26 cases plus 12
 coroutines): event-bus and container semantics, state-machine table, pool lifecycle and the per-frame allocation
 probe (`ProfilerRecorder`), clock and RNG fork determinism, `StableId` validation, catalog validation rules, the
 collision matrix, motor and chaser contracts, scoring breakdown, the input buffer window, chunk eligibility and
-selection weights, a corpus walk proving a chunk set cannot dead-end, floating-origin arithmetic, and the greybox
-run loop against the shipped scene wiring.
+selection weights, a corpus walk proving a chunk set cannot dead-end, floating-origin arithmetic, the greybox run
+loop against the shipped scene wiring, generator-sequence determinism through that wiring, and a 60 s soak that
+measures per-step allocation against a calibrated floor. The Boot-scene bring-up the two greybox fixtures share
+lives in one abstract `GreyboxSceneFixture` (additive load, boot wait, service resolution, exception capture,
+unload), so a second fixture covering the same scene cannot grow a second copy of its race conditions.
 
 ### Changed
 
@@ -112,10 +115,15 @@ runtime bug on first play:
 
 - **Nothing is compiled or run.** No `.meta` files, no authored assets, no test run. The 0 B/frame and 60 FPS
   figures are targets with a measuring instrument attached, not measurements.
-- Generator-level determinism (`TrackGenerator` producing the same chunk sequence from one seed) is proven only
-  at the RNG layer and the rule layer. A full generator fixture needs pooled chunk prefabs, which exist only
-  after the greybox build → scheduled with the M1 soak.
-- **No 60 s soak PlayMode test yet**; the allocation probe is per-frame inside `PoolingLifetimeTests` only.
+- Generator-level determinism is now written end-to-end — `TrackDeterminismSoakTests` restarts a run under a
+  fixed seed and compares the chunk ids, draw order and start distances that actually spawned, which is the layer
+  the RNG and rule tests cannot see. **It has never been executed**: like everything else here it is unbuilt,
+  and it self-ignores until `Build M1 Greybox` has run.
+- The 60 s soak exists for the same reason and is likewise unrun. Two things it does **not** discharge: it runs
+  in the editor, so it says nothing about §11.2's 60 FPS clause on a 4 GB device, and it drives the rig
+  invulnerable so a fixed-length soak cannot be cut short by a crash — which also means it proves nothing about
+  support surfaces or stumbles. It logs its own numbers (`GC Allocated In Frame` floor and soak average/worst,
+  chunks generated and recycled, fallbacks) so a real run can be recorded here instead of being guessed at.
 - Continues are M2 work. The shipped policy is `NoContinueOfferPolicy` (always refuses); the greybox scene opts
   into `DebugContinueOfferPolicy`, so the crash → continue → decline → results PlayMode coverage is against the
   debug policy and proves the wiring, not the production pricing.
@@ -132,13 +140,15 @@ runtime bug on first play:
   (ADR-0015 review trigger).
 - `GreyboxRunLoopTests` plays real frames, so an unlucky natural crash can shorten a distance assertion. Where
   determinism matters the fixture drives `IRunController.Tick(step)` directly; the residual exposure is stated in
-  the fixture rather than hidden behind retries.
+  the fixture rather than hidden behind retries. The determinism captures go further and yield **no frames at all**
+  — asserted, not assumed, because a capture spanning frames would be comparing two runs that had travelled
+  slightly different distances when each chunk was drawn.
 
 ### How to verify M1
 
 1. Unity **2022.3.62f1**, open the repository root, let packages restore.
 2. `Tools > Skyrift > Build M1 Greybox`, then `Tools > Skyrift > Validate Catalog` — both must report clean.
-3. Test Runner: **EditMode** (5 fixtures) then **PlayMode** (3 fixtures). `GreyboxRunLoopTests` self-ignores if
+3. Test Runner: **EditMode** (5 fixtures) then **PlayMode** (4 fixtures). Both greybox fixtures self-ignore if
    the greybox has not been built, so an `Ignore` there means step 2 was skipped, not that a test failed.
 4. Play `Assets/_Project/Scenes/Boot.unity`: the run auto-starts, the dev overlay shows live state, and its
    buttons pause/resume, restart with a fresh seed, quit the run, and accept or decline a continue offer.
